@@ -75,7 +75,7 @@ async function api(req,env,u){
     const mode=u.searchParams.get("mode")||"canvass", x=where(u,mode==="text",mode==="email");
     const desc=u.searchParams.get("dir")==="desc"?"DESC":"ASC";
     const order=mode==="canvass"?` ORDER BY CAST(v.house_number AS INTEGER) ${desc},v.house_number ${desc},v.unit,v.last_name,v.first_name`:" ORDER BY v.street,CAST(v.house_number AS INTEGER),v.unit,v.last_name";
-    const st=env.DB.prepare(baseSelect+x.sql+order+" LIMIT 1000").bind(...x.bind);
+    const st=env.DB.prepare(baseSelect+x.sql+order+" LIMIT 1000").bind(...x.binds);
     const data=await st.all();
     return json(data.results);
   }
@@ -85,7 +85,7 @@ async function api(req,env,u){
       COUNT(DISTINCT v.street||'|'||v.house_number) total_houses,
       COUNT(DISTINCT v.street||'|'||v.house_number||'|'||COALESCE(v.unit,'')) total_doors
       FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id${x.sql}`;
-    return json(await env.DB.prepare(sql).bind(...x.bind).first());
+    return json(await env.DB.prepare(sql).bind(...x.binds).first());
   }
   if(p==="/api/field-plan"){
     const x=where(u), sort={complete:"percent_complete",primary:"primary_voters",all:"all_voters",none:"none_voters"}[u.searchParams.get("sort")]||"street";
@@ -97,7 +97,7 @@ async function api(req,env,u){
       SUM(COALESCE(c.knock_lit,0)) completed,
       ROUND(100.0*SUM(COALESCE(c.knock_lit,0))/COUNT(*),1) percent_complete
       FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id${x.sql} GROUP BY v.street ORDER BY ${sort} ${dir}`;
-    return json((await env.DB.prepare(sql).bind(...x.bind).all()).results);
+    return json((await env.DB.prepare(sql).bind(...x.binds).all()).results);
   }
   if(p==="/api/activity" && req.method==="POST"){
     const d=await req.json(), allowed=["knock_lit","talked","supporter","follow_up","bad_phone","do_not_contact","intends_mail","intends_early","intends_polls","notes"];
