@@ -1,5 +1,5 @@
 {
-  "name": "canvass2026",
+  "name": "canvass",
   "compatibility_date": "2026-07-30",
   "main": "./canvass2026-worker.js",
   "d1_databases": [
