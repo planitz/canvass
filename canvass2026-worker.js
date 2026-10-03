@@ -117,6 +117,19 @@ body.canvassTab .precinctFilter{display:none!important}
 .voteBadge.badgeEarly{background:#ffd84d!important;color:#3a2b00!important}
 .voteBadge.badgeMail{background:#7b3fb5!important;color:#fff!important}
 .row.g26Mail{box-shadow:inset 0 0 0 2px #7b3fb5!important;background:#fbf7ff!important}
+
+/* outreach + compact campaign filter */
+.filters{display:flex!important;flex-direction:row!important;flex-wrap:wrap!important;column-gap:6px!important}
+.filters [data-filter="voted"],.filters .filterGroup:first-child{flex:0 0 100%!important}
+.filters [data-filter="method"]{flex:1 1 calc(75% - 3px)!important;width:auto!important}
+.filters [data-filter="supporter"]{flex:0 0 calc(25% - 3px)!important;width:auto!important;align-content:flex-end!important}
+.filters [data-filter="supporter"] .filterLabel{visibility:hidden!important}
+.filters [data-filter="supporter"] .filterBtn{width:100%!important;min-width:0!important}
+#textTools{display:none;padding:10px 16px;background:#fff;border-bottom:1px solid #ddd}
+#textTools .outreachLabel{font-weight:900;color:#d71920;font-size:13px;letter-spacing:.04em;margin-bottom:5px}
+#provider{width:100%;background:#dfff00;border:2px solid #111;color:#111;font-weight:900;font-size:15px}
+#message{width:100%;min-height:64px;margin-top:7px;padding:8px;border:1px solid #bbc3cf;border-radius:7px;font:14px system-ui}
+#clearMessage{margin-top:5px;font-weight:800}
 </style></head><body><header><h1>Ward 10 Canvass 2026</h1></header>
 <div class="tabs"><button type="button" data-tab="canvass" class="active">Canvass</button><button type="button" data-tab="field">Field Plan</button><button type="button" data-tab="text">Text / Call</button><button type="button" data-tab="email">Email</button></div>
 <div class="filters">
@@ -129,7 +142,7 @@ body.canvassTab .precinctFilter{display:none!important}
 </div>
 <div class="toolbar canvassTools"><button type="button" id="collapseFiltersBtn">Collapse Filters</button><button type="button" class="sortBtn selected" data-dir="asc"># ↑</button><button type="button" class="sortBtn" data-dir="desc"># ↓</button><button type="button" class="parityBtn" data-parity="even">Even</button><button type="button" class="parityBtn" data-parity="odd">Odd</button></div>
 <div class="searchRow"><input id="search" placeholder="Search name, address, phone, email"><button type="button" id="clearFiltersBtn" class="clearBtn">Clear</button></div>
-<div id="summary" class="summary"></div><main id="content" class="content"></main>
+<div id="textTools"><div class="outreachLabel">SELECT OUTREACH METHOD</div><select id="provider"><option value="phone">Phone</option><option value="quo">Quo</option><option value="google">Google Voice</option></select><textarea id="message" placeholder="Message to use for texts"></textarea><button type="button" id="clearMessage">Clear Message</button></div><div id="summary" class="summary"></div><main id="content" class="content"></main>
 <script>
 let tab="canvass"; const $=x=>document.querySelector(x), filters=["street","voted","method","precinct","supporter"];
 async function meta(){let m=await getJSON("/api/meta");let street=$("#street");street.innerHTML='<option value="">All Streets</option>';m.streets.forEach(x=>{let o=document.createElement("option");o.value=x;o.textContent=x;street.appendChild(o)});return m}
@@ -148,10 +161,10 @@ async function setv(id,field,value){let r=await fetch("/api/activity",{method:"P
 async function field(p){p.set("sort","complete");p.set("dir","desc");let rows=await getJSON("/api/field-plan?"+p);$("#summary").innerHTML="";$("#content").innerHTML='<div class="toolbar"><button type="button" data-fieldsort="complete">% Complete</button><button type="button" data-fieldsort="primary">P26 Voters</button><button type="button" data-fieldsort="all">All Voters</button><button type="button" data-fieldsort="none">None Voters</button></div>'+rows.map(x=>'<div class="row street"><b>'+esc(x.street)+'</b><span>'+x.percent_complete+'% complete</span><span>'+x.primary_voters+' P26</span><span>'+x.all_voters+' voters</span><span>'+x.total_doors+' doors</span><span>'+x.total_houses+' houses</span></div>').join("")}
 async function fieldSort(s){let p=qs();p.set("sort",s);p.set("dir","desc");let rows=await getJSON("/api/field-plan?"+p);$("#content").querySelectorAll(".row").forEach(x=>x.remove());$("#content").insertAdjacentHTML("beforeend",rows.map(x=>'<div class="row street"><b>'+esc(x.street)+'</b><span>'+x.percent_complete+'% complete</span><span>'+x.primary_voters+' P26</span><span>'+x.all_voters+' voters</span><span>'+x.total_doors+' doors</span><span>'+x.total_houses+' houses</span></div>').join(""))}
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
-function switchTab(next,el){document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));el.classList.add("active");tab=next;document.body.classList.toggle("canvassTab",tab==="canvass");load()}
+function switchTab(next,el){document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));el.classList.add("active");tab=next;document.body.classList.toggle("canvassTab",tab==="canvass");document.querySelector("#textTools").style.display=tab==="text"?"block":"none";load()}
 document.querySelectorAll(".tabs button").forEach(b=>b.addEventListener("click",()=>switchTab(b.dataset.tab,b)));
 document.querySelectorAll(".filterBtn").forEach(b=>b.addEventListener("click",()=>pickFilter(b)));
-$("#clearFiltersBtn").addEventListener("click",clearFilters);
+$("#clearFiltersBtn").addEventListener("click",clearFilters);$("#clearMessage").addEventListener("click",()=>{$("#message").value=""});
 $("#street").addEventListener("change",load);
 window.houseDir="asc";window.parity="";
 document.querySelectorAll(".sortBtn").forEach(b=>b.addEventListener("click",()=>{window.houseDir=b.dataset.dir;document.querySelectorAll(".sortBtn").forEach(x=>x.classList.toggle("selected",x===b));load()}));
