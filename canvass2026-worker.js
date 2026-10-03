@@ -1,0 +1,105 @@
+const esc = s => String(s ?? "").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const json = (x,s=200)=>new Response(JSON.stringify(x),{status:s,headers:{"content-type":"application/json"}});
+const voteExpr = {
+  P22:"v.p22_voted=1", G22:"v.g22_voted=1", P24:"v.p24_voted=1",
+  G24:"v.g24_voted=1", P26:"v.p26_voted=1", G26:"v.g26_voted=1",
+  None:"v.p22_voted=0 AND v.g22_voted=0 AND v.p24_voted=0 AND v.g24_voted=0 AND v.p26_voted=0 AND v.g26_voted=0"
+};
+function where(u, phone=false, email=false){
+  const q=u.searchParams, w=[], b=[];
+  if(q.get("street")){w.push("v.street=?");b.push(q.get("street"))}
+  if(q.get("precinct")){w.push("v.precinct=?");b.push(q.get("precinct"))}
+  if(q.get("voted") && voteExpr[q.get("voted")]) w.push(voteExpr[q.get("voted")]);
+  if(q.get("method")){
+    const e=q.get("voted")==="G26"?"g26":"p26";
+    w.push(`v.${e}_method=?`);b.push(q.get("method"));
+  }
+  if(q.get("supporter")==="1") w.push("COALESCE(c.supporter,0)=1");
+  if(q.get("parity")==="even") w.push("CAST(v.house_number AS INTEGER)%2=0");
+  if(q.get("parity")==="odd") w.push("CAST(v.house_number AS INTEGER)%2=1");
+  if(q.get("q")){
+    const z="%"+q.get("q")+"%"; w.push("(v.first_name LIKE ? OR v.last_name LIKE ? OR v.household_address LIKE ? OR v.phone LIKE ? OR v.email LIKE ?)");
+    b.push(z,z,z,z,z);
+  }
+  if(phone) w.push("v.phone IS NOT NULL AND TRIM(v.phone)<>'' AND COALESCE(c.bad_phone,0)=0");
+  if(email) w.push("v.email IS NOT NULL AND TRIM(v.email)<>''");
+  return {sql:w.length?" WHERE "+w.join(" AND "):"", binds:b};
+}
+const baseSelect = `SELECT v.*,COALESCE(c.knock_lit,0) knock_lit,COALESCE(c.talked,0) talked,
+COALESCE(c.supporter,0) supporter,COALESCE(c.follow_up,0) follow_up,COALESCE(c.bad_phone,0) bad_phone,
+COALESCE(c.do_not_contact,0) do_not_contact,COALESCE(c.intends_mail,0) intends_mail,
+COALESCE(c.intends_early,0) intends_early,COALESCE(c.intends_polls,0) intends_polls,c.notes campaign_notes
+FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id`;
+
+async function api(req,env,u){
+  const p=u.pathname;
+  if(p==="/api/meta"){
+    const [streets,precincts]=await Promise.all([
+      env.DB.prepare("SELECT DISTINCT street FROM voters ORDER BY street").all(),
+      env.DB.prepare("SELECT precinct,COUNT(*) count FROM voters GROUP BY precinct ORDER BY precinct").all()
+    ]);
+    return json({streets:streets.results.map(x=>x.street),precincts:precincts.results});
+  }
+  if(p==="/api/voters"){
+    const mode=u.searchParams.get("mode")||"canvass", x=where(u,mode==="text",mode==="email");
+    const desc=u.searchParams.get("dir")==="desc"?"DESC":"ASC";
+    const order=mode==="canvass"?` ORDER BY CAST(v.house_number AS INTEGER) ${desc},v.house_number ${desc},v.unit,v.last_name,v.first_name`:" ORDER BY v.street,CAST(v.house_number AS INTEGER),v.unit,v.last_name";
+    const st=env.DB.prepare(baseSelect+x.sql+order+" LIMIT 1000").bind(...x.bind);
+    const data=await st.all();
+    return json(data.results);
+  }
+  if(p==="/api/summary"){
+    const x=where(u);
+    const sql=`SELECT COUNT(*) total_voters,SUM(v.p26_voted) primary_voters,
+      COUNT(DISTINCT v.street||'|'||v.house_number) total_houses,
+      COUNT(DISTINCT v.street||'|'||v.house_number||'|'||COALESCE(v.unit,'')) total_doors
+      FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id${x.sql}`;
+    return json(await env.DB.prepare(sql).bind(...x.bind).first());
+  }
+  if(p==="/api/field-plan"){
+    const x=where(u), sort={complete:"percent_complete",primary:"primary_voters",all:"all_voters",none:"none_voters"}[u.searchParams.get("sort")]||"street";
+    const dir=u.searchParams.get("dir")==="desc"?"DESC":"ASC";
+    const sql=`SELECT v.street,COUNT(*) all_voters,SUM(v.p26_voted) primary_voters,
+      SUM(CASE WHEN v.p22_voted=0 AND v.g22_voted=0 AND v.p24_voted=0 AND v.g24_voted=0 AND v.p26_voted=0 AND v.g26_voted=0 THEN 1 ELSE 0 END) none_voters,
+      COUNT(DISTINCT v.house_number) total_houses,
+      COUNT(DISTINCT v.house_number||'|'||COALESCE(v.unit,'')) total_doors,
+      SUM(COALESCE(c.knock_lit,0)) completed,
+      ROUND(100.0*SUM(COALESCE(c.knock_lit,0))/COUNT(*),1) percent_complete
+      FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id${x.sql} GROUP BY v.street ORDER BY ${sort} ${dir}`;
+    return json((await env.DB.prepare(sql).bind(...x.bind).all()).results);
+  }
+  if(p==="/api/activity" && req.method==="POST"){
+    const d=await req.json(), allowed=["knock_lit","talked","supporter","follow_up","bad_phone","do_not_contact","intends_mail","intends_early","intends_polls","notes"];
+    if(!d.voter_id || !allowed.includes(d.field)) return json({error:"bad request"},400);
+    const value=d.field==="notes"?String(d.value??""):(d.value?1:0);
+    await env.DB.prepare(`INSERT INTO campaign_activity(voter_id,${d.field},updated_at) VALUES(?,?,CURRENT_TIMESTAMP)
+      ON CONFLICT(voter_id) DO UPDATE SET ${d.field}=excluded.${d.field},updated_at=CURRENT_TIMESTAMP`).bind(d.voter_id,value).run();
+    await env.DB.prepare("INSERT INTO activity_log(voter_id,action_type,action_value) VALUES(?,?,?)").bind(d.voter_id,d.field.toUpperCase(),String(value)).run();
+    return json({ok:true});
+  }
+  return json({error:"not found"},404);
+}
+function page(){
+return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Ward 10 Canvass 2026</title><style>
+*{box-sizing:border-box}body{margin:0;font:14px system-ui;background:#f5f7fa;color:#172033}header{background:#0A1F44;color:white;padding:14px 16px}h1{font-size:20px;margin:0}.tabs,.filters,.summary{display:flex;gap:8px;flex-wrap:wrap;padding:10px;background:white;border-bottom:1px solid #ddd}.tabs button{font-weight:700}.active{background:#0A1F44!important;color:white}button,select,input{min-height:38px;border:1px solid #bbc3cf;border-radius:7px;background:white;padding:7px 10px}.filters input{flex:1;min-width:160px}.summary b{font-size:17px}.summary span{min-width:115px}.content{padding:10px}.row{background:white;border:1px solid #dde2e8;border-radius:9px;margin:7px 0;padding:10px}.addr{font-weight:800}.name{font-size:16px;margin:4px 0}.meta{color:#5d6878;font-size:12px}.actions{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.actions button.on{background:#A6CE39;border-color:#789b1d}.street{display:grid;grid-template-columns:2fr repeat(5,1fr);gap:6px;align-items:center}.note{width:100%;margin-top:6px}.danger.on{background:#ffd1d1}.toolbar{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}@media(max-width:650px){.street{grid-template-columns:1.5fr repeat(2,1fr)}.street span:nth-child(n+4){font-size:11px}}
+</style></head><body><header><h1>Ward 10 Canvass 2026</h1></header>
+<div class="tabs"><button data-tab="canvass" class="active">Canvass</button><button data-tab="field">Field Plan</button><button data-tab="text">Text / Call</button><button data-tab="email">Email</button></div>
+<div class="filters"><select id="street"><option value="">All streets</option></select><select id="voted"><option value="">Voted in: Any</option><option>G26</option><option>P26</option><option>G24</option><option>P24</option><option>G22</option><option>P22</option><option>None</option></select><select id="method"><option value="">Method: Any</option><option>Early</option><option>Mail</option><option>Polls</option></select><select id="precinct"><option value="">All precincts</option></select><select id="supporter"><option value="">All voters</option><option value="1">Supporters</option></select><input id="search" placeholder="Search name, address, phone, email"></div>
+<div id="summary" class="summary"></div><main id="content" class="content"></main>
+<script>
+let tab="canvass"; const $=x=>document.querySelector(x), filters=["street","voted","method","precinct","supporter"];
+async function meta(){let m=await fetch("/api/meta").then(r=>r.json());m.streets.forEach(x=>$("#street").insertAdjacentHTML("beforeend",'<option>'+x+'</option>'));m.precincts.forEach(x=>$("#precinct").insertAdjacentHTML("beforeend",'<option>'+x.precinct+'</option>'))}
+function qs(){let p=new URLSearchParams;filters.forEach(x=>{let v=$("#"+x).value;if(v)p.set(x,v)});if($("#search").value)p.set("q",$("#search").value);return p}
+async function load(){let p=qs();if(tab==="field")return field(p);p.set("mode",tab);let [rows,s]=await Promise.all([fetch("/api/voters?"+p).then(r=>r.json()),fetch("/api/summary?"+qs()).then(r=>r.json())]);$("#summary").innerHTML='<span><b>'+s.primary_voters+'</b><br>P26 voters</span><span><b>'+s.total_voters+'</b><br>Total voters</span><span><b>'+s.total_doors+'</b><br>Total doors</span><span><b>'+s.total_houses+'</b><br>Total houses</span>';$("#content").innerHTML=rows.map(card).join("")||"No results."}
+function card(v){let contact=tab==="text"?'<div class="actions"><button onclick="location.href=\'sms:'+v.phone+'\'">Text</button><button onclick="location.href=\'tel:'+v.phone+'\'">Call</button></div>':tab==="email"?'<div class="actions"><button onclick="location.href=\'mailto:'+v.email+'\'">Email</button></div>':"";
+return '<div class="row"><div class="addr">'+esc(v.house_number+" "+v.street+(v.unit?" · "+v.unit:""))+'</div><div class="name">'+esc(v.first_name+" "+v.last_name)+'</div><div class="meta">Precinct '+esc(v.precinct)+' · P26 '+(v.p26_voted?esc(v.p26_method):"No")+(v.phone?" · "+esc(v.phone):"")+'</div>'+contact+'<div class="actions">'+btn(v,"knock_lit","✓ Knock/Lit")+btn(v,"talked","Talk")+btn(v,"supporter","★ Supporter")+btn(v,"follow_up","Follow Up")+(tab==="text"?btn(v,"bad_phone","✕ Bad #","danger")+btn(v,"do_not_contact","🛑 Stop","danger")+btn(v,"intends_mail","✉ Mail")+btn(v,"intends_early","☀ Early")+btn(v,"intends_polls","🗳 Polls"):"")+'</div><input class="note" value="'+esc(v.campaign_notes||"")+'" placeholder="Notes" onchange="setv(\''+v.voter_id+'\',\'notes\',this.value)"></div>'}
+function btn(v,f,l,c=""){return '<button class="'+c+(v[f]?" on":"")+'" onclick="toggle(this,\''+v.voter_id+'\',\''+f+'\')">'+l+'</button>'}
+async function toggle(el,id,f){let value=!el.classList.contains("on");await setv(id,f,value);el.classList.toggle("on",value)}
+async function setv(id,field,value){await fetch("/api/activity",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({voter_id:id,field,value})})}
+async function field(p){p.set("sort","complete");p.set("dir","desc");let rows=await fetch("/api/field-plan?"+p).then(r=>r.json());$("#summary").innerHTML="";$("#content").innerHTML='<div class="toolbar"><button onclick="fieldSort(\'complete\')">% Complete</button><button onclick="fieldSort(\'primary\')">P26 Voters</button><button onclick="fieldSort(\'all\')">All Voters</button><button onclick="fieldSort(\'none\')">None Voters</button></div>'+rows.map(x=>'<div class="row street"><b>'+esc(x.street)+'</b><span>'+x.percent_complete+'% complete</span><span>'+x.primary_voters+' P26</span><span>'+x.all_voters+' voters</span><span>'+x.total_doors+' doors</span><span>'+x.total_houses+' houses</span></div>').join("")}
+async function fieldSort(s){let p=qs();p.set("sort",s);p.set("dir","desc");let rows=await fetch("/api/field-plan?"+p).then(r=>r.json());$("#content").querySelectorAll(".row").forEach(x=>x.remove());$("#content").insertAdjacentHTML("beforeend",rows.map(x=>'<div class="row street"><b>'+esc(x.street)+'</b><span>'+x.percent_complete+'% complete</span><span>'+x.primary_voters+' P26</span><span>'+x.all_voters+' voters</span><span>'+x.total_doors+' doors</span><span>'+x.total_houses+' houses</span></div>').join(""))}
+function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));b.classList.add("active");tab=b.dataset.tab;load()});filters.forEach(x=>$("#"+x).onchange=load);let t;$("#search").oninput=()=>{clearTimeout(t);t=setTimeout(load,250)};meta().then(load);
+</script></body></html>`}
+export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname.startsWith("/api/"))return await api(req,env,u);return new Response(page(),{headers:{"content-type":"text/html;charset=utf-8"}})}catch(e){return json({error:String(e?.message||e)},500)}}};
