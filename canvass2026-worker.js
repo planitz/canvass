@@ -28,7 +28,7 @@ function where(u, phone=false, email=false){
 const baseSelect = `SELECT v.*,COALESCE(c.knock_lit,0) knock_lit,COALESCE(c.talked,0) talked,
 COALESCE(c.supporter,0) supporter,COALESCE(c.follow_up,0) follow_up,COALESCE(c.bad_phone,0) bad_phone,
 COALESCE(c.do_not_contact,0) do_not_contact,COALESCE(c.intends_mail,0) intends_mail,
-COALESCE(c.intends_early,0) intends_early,COALESCE(c.intends_polls,0) intends_polls,c.notes campaign_notes
+COALESCE(c.intends_early,0) intends_early,COALESCE(c.intends_polls,0) intends_polls,COALESCE(c.intends_no_vote,0) intends_no_vote,c.notes campaign_notes,(SELECT MAX(created_at) FROM activity_log al WHERE al.voter_id=v.voter_id AND al.action_type='CALL') last_call_at,(SELECT MAX(created_at) FROM activity_log al WHERE al.voter_id=v.voter_id AND al.action_type='TEXT') last_text_at
 FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id`;
 
 async function api(req,env,u){
@@ -49,8 +49,8 @@ async function api(req,env,u){
     return json(data.results);
   }
   if(p==="/api/summary"){
-    const x=where(u);
-    const sql=`SELECT
+    const x=where(u,u.searchParams.get("mode")==="text");
+    const sql=u.searchParams.get("mode")==="text"?`SELECT COUNT(*) phone_count FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id${x.sql}`:`SELECT
       SUM(CASE WHEN COALESCE(v.g26_mail_record,0)=1 THEN 1 ELSE 0 END) g26_mail,
       SUM(CASE WHEN v.g26_mail_request_date IS NOT NULL AND TRIM(v.g26_mail_request_date)<>'' THEN 1 ELSE 0 END) requested,
       SUM(CASE WHEN v.g26_mail_sos_mail_date IS NOT NULL AND TRIM(v.g26_mail_sos_mail_date)<>'' THEN 1 ELSE 0 END) sent,
@@ -71,14 +71,17 @@ async function api(req,env,u){
     return json((await env.DB.prepare(sql).bind(...x.binds).all()).results);
   }
   if(p==="/api/activity" && req.method==="POST"){
-    const d=await req.json(), allowed=["knock_lit","talked","supporter","follow_up","bad_phone","do_not_contact","intends_mail","intends_early","intends_polls","notes"];
+    const d=await req.json(), allowed=["knock_lit","talked","supporter","follow_up","bad_phone","do_not_contact","intends_mail","intends_early","intends_polls","intends_no_vote","notes"];
     if(!d.voter_id || !allowed.includes(d.field)) return json({error:"bad request"},400);
-    const value=d.field==="notes"?String(d.value??""):(d.value?1:0);
+    const value=d.field==="notes"?String(d.value??""):(d.value?1:0);if(value&&["intends_mail","intends_early","intends_polls","intends_no_vote"].includes(d.field))await env.DB.prepare("INSERT INTO campaign_activity(voter_id,updated_at) VALUES(?,CURRENT_TIMESTAMP) ON CONFLICT(voter_id) DO UPDATE SET intends_mail=0,intends_early=0,intends_polls=0,intends_no_vote=0,updated_at=CURRENT_TIMESTAMP").bind(d.voter_id).run();
     await env.DB.prepare(`INSERT INTO campaign_activity(voter_id,${d.field},updated_at) VALUES(?,?,CURRENT_TIMESTAMP)
       ON CONFLICT(voter_id) DO UPDATE SET ${d.field}=excluded.${d.field},updated_at=CURRENT_TIMESTAMP`).bind(d.voter_id,value).run();
     await env.DB.prepare("INSERT INTO activity_log(voter_id,action_type,action_value) VALUES(?,?,?)").bind(d.voter_id,d.field.toUpperCase(),String(value)).run();
     return json({ok:true});
   }
+  if(p==="/api/contact" && req.method==="POST"){const d=await req.json();if(!d.voter_id||!["CALL","TEXT"].includes(d.type))return json({error:"bad request"},400);await env.DB.prepare("INSERT INTO activity_log(voter_id,action_type,action_value,note) VALUES(?,?,?,?)").bind(d.voter_id,d.type,d.provider||"phone",d.type==="TEXT"?(d.message||""):null).run();return json({ok:true})}
+  if(p==="/api/contact" && req.method==="DELETE"){const d=await req.json();await env.DB.prepare("DELETE FROM activity_log WHERE id=? AND voter_id=? AND action_type IN ('CALL','TEXT')").bind(d.id,d.voter_id).run();return json({ok:true})}
+  if(p==="/api/contact-history"){const id=u.searchParams.get("voter_id");return json((await env.DB.prepare("SELECT id,action_type,action_value,note,created_at FROM activity_log WHERE voter_id=? AND action_type IN ('CALL','TEXT') ORDER BY created_at DESC,id DESC").bind(id).all()).results)}
   return json({error:"not found"},404);
 }
 function page(){
@@ -130,7 +133,7 @@ body.canvassTab .precinctFilter{display:none!important}
 #provider{width:100%;background:#dfff00;border:2px solid #111;color:#111;font-weight:900;font-size:15px}
 #message{width:100%;min-height:64px;margin-top:7px;padding:8px;border:1px solid #bbc3cf;border-radius:7px;font:14px system-ui}
 #clearMessage{margin-top:5px;font-weight:800}
-</style></head><body><header><h1>Ward 10 Canvass 2026</h1></header>
+.supporterBtn.on{background:#d93636!important;color:#fff!important;border-color:#a51f1f!important}.earlyChoice.on{background:#ffd84d!important;color:#332800!important}.mailChoice.on{background:#7b3fb5!important;color:#fff!important}.pollsChoice.on{background:#39a852!important;color:#fff!important}.noChoice.on{background:#d93636!important;color:#fff!important}</style></head><body><header><h1>Ward 10 Canvass 2026</h1></header>
 <div class="tabs"><button type="button" data-tab="canvass" class="active">Canvass</button><button type="button" data-tab="field">Field Plan</button><button type="button" data-tab="text">Text / Call</button><button type="button" data-tab="email">Email</button></div>
 <div class="filters">
 <div class="filterGroup"><span class="filterLabel">Street</span><select id="street" class="streetSelect"><option value="">All Streets</option></select></div>
@@ -150,11 +153,11 @@ function qs(){let p=new URLSearchParams;filters.forEach(x=>{let v=$("#"+x).value
 function pickFilter(btn){let g=btn.closest("[data-filter]"),id=g.dataset.filter,input=$("#"+id),same=input.value===btn.dataset.value;g.querySelectorAll(".filterBtn").forEach(x=>x.classList.remove("selected"));input.value=same?"":btn.dataset.value;if(!same)btn.classList.add("selected");load()}
 function clearFilters(){filters.forEach(x=>$("#"+x).value="");$("#search").value="";document.querySelectorAll(".filterBtn").forEach(x=>x.classList.remove("selected"));load()}
 async function getJSON(url){let r=await fetch(url),z=await r.json();if(!r.ok||z.error)throw new Error(z.error||("Request failed "+r.status));return z}
-async function load(){try{let p=qs();if(tab==="field")return await field(p);p.set("mode",tab);let [rows,s]=await Promise.all([getJSON("/api/voters?"+p),getJSON("/api/summary?"+qs())]);$("#summary").innerHTML='<span><b>'+Number(s.g26_mail||0)+'</b> G26 Mail</span><span><b>'+Number(s.requested||0)+'</b> Req</span><span><b>'+Number(s.sent||0)+'</b> Sent</span><span><b>'+Number(s.received||0)+'</b> Rec</span>';if(!Array.isArray(rows))throw new Error("Voter results were not returned as a list");$("#content").innerHTML=rows.length?rows.map(card).join(""):"No results for these filters."}catch(e){$("#content").innerHTML='<div class="row"><b>Load error</b><div class="meta">'+esc(e.message)+'</div></div>';console.error(e)}}
-function card(v){let contact=tab==="text"?'<div class="actions"><button type="button" data-go="sms" data-contact="'+esc(v.phone||"")+'">Text</button><button type="button" data-go="tel" data-contact="'+esc(v.phone||"")+'">Call</button></div>':tab==="email"?'<div class="actions"><button type="button" data-go="mailto" data-contact="'+esc(v.email||"")+'">Email</button></div>':"";
+async function load(){try{let p=qs();if(tab==="field")return await field(p);p.set("mode",tab);let [rows,s]=await Promise.all([getJSON("/api/voters?"+p),getJSON("/api/summary?"+(()=>{let z=qs();if(tab==="text")z.set("mode","text");return z})())]);$("#summary").innerHTML=tab==="text"?'<span style="grid-column:1/-1"><b>'+Number(s.phone_count||0)+'</b> Phone Numbers</span>':'<span><b>'+Number(s.g26_mail||0)+'</b> G26 Mail</span><span><b>'+Number(s.requested||0)+'</b> Req</span><span><b>'+Number(s.sent||0)+'</b> Sent</span><span><b>'+Number(s.received||0)+'</b> Rec</span>';if(!Array.isArray(rows))throw new Error("Voter results were not returned as a list");$("#content").innerHTML=rows.length?rows.map(card).join(""):"No results for these filters."}catch(e){$("#content").innerHTML='<div class="row"><b>Load error</b><div class="meta">'+esc(e.message)+'</div></div>';console.error(e)}}
+function card(v){let contact=tab==="text"?'<div class="actions"><button type="button" data-go="sms" data-voter="'+esc(v.voter_id)+'" data-contact="'+esc(v.phone||"")+'">💬 Text</button><button type="button" data-go="tel" data-voter="'+esc(v.voter_id)+'" data-contact="'+esc(v.phone||"")+'">📞 Call</button></div>':tab==="email"?'<div class="actions"><button type="button" data-go="mailto" data-contact="'+esc(v.email||"")+'">Email</button></div>':"";
 let badges="";if(v.p26_voted&&v.p26_method==="Early")badges+='<span class="voteBadge badgeEarly">P26 Early</span>';if(v.p26_voted&&v.p26_method==="Mail")badges+='<span class="voteBadge badgeMail">P26 Mail</span>';if(v.g26_mail_record)badges+='<span class="voteBadge badgeMail">G26 Mail</span>';
 let rowClass="row"+(v.p26_voted?" primaryVoter":"")+(v.g26_mail_record?" g26Mail":"");
-return '<div class="'+rowClass+'"><div class="nameLine"><div class="addrName"><div class="addr">'+esc(v.house_number+" "+v.street+(v.unit?" · "+v.unit:""))+'</div><div class="name">'+esc(v.first_name+" "+v.last_name)+'</div></div></div><div class="voterDetail"><div class="meta">'+esc(v.precinct)+badges+(v.phone?" · "+esc(v.phone):"")+'</div><div class="nameActions">'+btn(v,"knock_lit","✔️","knockBtn")+btn(v,"talked","💬","talkBtn")+btn(v,"supporter","⭐","supporterBtn")+btn(v,"follow_up","❗","followBtn")+'</div></div>'+contact+'<div class="actions">'+(tab==="text"?btn(v,"bad_phone","✕ Bad #","danger")+btn(v,"do_not_contact","Stop","danger")+btn(v,"intends_mail","Mail")+btn(v,"intends_early","Early")+btn(v,"intends_polls","Polls"):"")+'</div><div class="noteWrap" data-note-wrap="'+esc(v.voter_id)+'"><input class="note" data-voter="'+esc(v.voter_id)+'" value="'+esc(v.campaign_notes||"")+'" placeholder="Notes"></div></div>'}
+return '<div class="'+rowClass+'"><div class="nameLine"><div class="addrName"><div class="addr">'+esc(v.house_number+" "+v.street+(v.unit?" · "+v.unit:""))+'</div><div class="name">'+esc(v.first_name+" "+v.last_name)+'</div></div></div><div class="voterDetail"><div class="meta">'+esc(v.precinct)+badges+(v.phone?" · "+esc(v.phone):"")+'</div><div class="nameActions">'+btn(v,"knock_lit",v.knock_lit?"✅":"☑️","knockBtn")+btn(v,"talked","🗣️","talkBtn")+btn(v,"supporter","⭐","supporterBtn")+btn(v,"follow_up","❗","followBtn")+'<button type="button" class="noteBtn" data-action="note" data-voter="'+esc(v.voter_id)+'">📝</button>'+'</div></div>'+contact+'<div class="actions">'+(tab==="text"?btn(v,"bad_phone","📵","danger")+btn(v,"do_not_contact","🚫","danger")+btn(v,"intends_early","E","earlyChoice")+btn(v,"intends_mail","MB","mailChoice")+btn(v,"intends_polls","P","pollsChoice")+btn(v,"intends_no_vote","NO VOTE","noChoice"):"")+'</div><div class="noteWrap" data-note-wrap="'+esc(v.voter_id)+'"><input class="note" data-voter="'+esc(v.voter_id)+'" value="'+esc(v.campaign_notes||"")+'" placeholder="Notes"></div></div>'}
 function btn(v,f,l,c=""){return '<button type="button" class="'+c+(v[f]?" on":"")+'" data-action="toggle" data-voter="'+esc(v.voter_id)+'" data-field="'+esc(f)+'">'+l+'</button>'}
 async function toggle(el,id,f){let value=!el.classList.contains("on");await setv(id,f,value);el.classList.toggle("on",value)}
 async function setv(id,field,value){let r=await fetch("/api/activity",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({voter_id:id,field,value})});let z=await r.json();if(!r.ok||z.error)throw new Error(z.error||("Save failed "+r.status));return z}
