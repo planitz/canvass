@@ -99,11 +99,11 @@ body.canvassTab .precinctFilter{display:none!important}
 .searchRow{display:flex!important;gap:5px!important;padding:7px 0!important}.searchRow input{flex:1!important;min-width:0!important}
 .summary{display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:2px!important;padding:7px 8px!important;white-space:nowrap!important}
 .summary span,.summary b{font-size:13px!important}
-.content{padding:8px!important}.content .row{padding:8px 10px!important;margin:6px 0!important}
+.content{padding:8px!important}.content .row{padding:7px 10px 4px!important;margin:5px 0!important}
 .nameLine{display:flex!important;min-width:0!important}.addrName{display:flex!important;align-items:baseline!important;gap:8px!important;width:100%!important;min-width:0!important}
 .addrName .addr{font-size:12px!important;font-weight:800!important;max-width:45%!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
 .addrName .name{font-size:12px!important;min-width:0!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
-.voterDetail{display:flex!important;align-items:center!important;gap:5px!important;margin-top:3px!important;min-width:0!important}
+.voterDetail{display:flex!important;align-items:center!important;gap:5px!important;margin-top:2px!important;min-width:0!important;margin-bottom:0!important}
 .voterDetail .meta{flex:1!important;min-width:0!important;font-size:12px!important;margin:0!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
 .nameActions{display:flex!important;gap:3px!important;flex:0 0 auto!important;margin-left:auto!important}
 .nameActions button{width:28px!important;min-width:28px!important;height:28px!important;min-height:28px!important;padding:0!important}
