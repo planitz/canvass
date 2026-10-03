@@ -33,37 +33,6 @@ FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id`;
 
 async function api(req,env,u){
   const p=u.pathname;
-  const importAuth = () => {
-    const token=req.headers.get("x-import-secret")||"";
-    return !!env.IMPORT_SECRET && token===env.IMPORT_SECRET;
-  };
-  if(p==="/api/import/status"){
-    if(!importAuth()) return json({error:"Unauthorized"},401);
-    const r=await env.DB.prepare("SELECT COUNT(*) count FROM voters").first();
-    return json({count:r.count,open:r.count===0});
-  }
-  if(p==="/api/import/batch" && req.method==="POST"){
-    if(!importAuth()) return json({error:"Unauthorized"},401);
-    const existing=await env.DB.prepare("SELECT COUNT(*) count FROM voters").first();
-    const body=await req.json(), rows=body.rows, expected=Number(body.expected_count_before);
-    if(!Number.isInteger(expected)||expected<0||expected>7333) return json({error:"Invalid batch sequence."},400);
-    if(Number(existing.count)!==expected) return json({error:"Import sequence mismatch.",count:existing.count,expected},409);
-    if(existing.count>=7333) return json({error:"Import already complete.",count:existing.count},409);
-    if(!Array.isArray(rows)||rows.length<1||rows.length>75||existing.count+rows.length>7333) return json({error:"Invalid batch size."},400);
-    const cols=["voter_id","registration_status","first_name","middle_name","last_name","suffix","date_of_birth","house_number","street","unit","household_address","city","zip","precinct","ward","ward_district","party","registration_date","effective_date","status_change_date","phone","email","p22_voted","p22_method","g22_voted","g22_method","p24_voted","p24_method","g24_voted","g24_method","p26_voted","p26_method","g26_voted","g26_method","g26_mail_record","g26_mail_request_date","g26_mail_application_status","g26_mail_application_rejection","g26_mail_sos_mail_date","g26_mail_boe_received_date","g26_mail_status","g26_mail_ballot_deficiency","g26_voted_at_local_board","last_vote_date","last_election","last_vote_method","official_source","match_confidence","data_quality_flags"];
-    const sql="INSERT INTO voters("+cols.join(",")+") VALUES("+cols.map(()=>"?").join(",")+")";
-    await env.DB.batch(rows.map(r=>env.DB.prepare(sql).bind(...cols.map(c=>r[c]===undefined||r[c]===""?null:r[c]))));
-    return json({ok:true,inserted:rows.length});
-  }
-  if(p==="/api/import/finish" && req.method==="POST"){
-    if(!importAuth()) return json({error:"Unauthorized"},401);
-    const r=await env.DB.prepare("SELECT COUNT(*) count FROM voters").first();
-    if(r.count!==7333) return json({error:"Expected exactly 7333 voters.",count:r.count},409);
-    const p26=await env.DB.prepare("SELECT SUM(p26_voted) n FROM voters").first();
-    if(Number(p26.n)!==1491) return json({error:"P26 verification failed.",p26:p26.n},409);
-    await env.DB.prepare("INSERT INTO data_imports(import_type,source_name,row_count,notes) VALUES('voters','Ward10_NEW_APP_IMPORT_2026-10-03.csv',7333,'Authenticated browser import; reconciled master')").run();
-    return json({ok:true,count:r.count,p26:p26.n});
-  }
   if(p==="/api/meta"){
     const [streets,precincts]=await Promise.all([
       env.DB.prepare("SELECT DISTINCT street FROM voters ORDER BY street").all(),
@@ -112,13 +81,6 @@ async function api(req,env,u){
   }
   return json({error:"not found"},404);
 }
-function importPage(){
-return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>canvass2026 secure import</title><style>body{font:16px system-ui;max-width:760px;margin:35px auto;padding:20px}input,button{font-size:16px;padding:10px;margin:6px 0;width:100%}button{font-weight:700}pre{background:#f4f6f8;padding:12px;white-space:pre-wrap} .houseGroup{margin:10px 12px;border:1px solid #cfd8e3;border-radius:12px;background:#fff;overflow:hidden}.houseHeader{padding:9px 12px;font-weight:900;font-size:17px;background:#eef3f8;border-bottom:1px solid #d9e0e8}.houseHeader span,.doorGroup{margin:0;background:#fff;overflow:hidden;border-bottom:1px solid #d9e0e8}.doorGroup:last-child{border-bottom:0}.doorHeader{padding:8px 12px;font-weight:800;font-size:16px;background:#f5f7fa;border-bottom:1px solid #e1e6ec}.doorHeader span{font-size:11px;font-weight:600;color:#6b7b8f;margin-left:5px}.doorGroup .row{margin:0;border:0;border-radius:0;border-bottom:1px solid #edf0f3}.doorGroup .row:last-child{border-bottom:0}.voterInDoor .name{font-weight:700} .searchRow{display:flex;gap:8px;align-items:center;padding:8px 20px;background:#fff;border-bottom:1px solid #ddd}.searchRow input{flex:1;min-width:0}.searchRow .clearBtn{flex-shrink:0} .voterDetail{display:flex;align-items:center;gap:6px;margin-top:4px;min-width:0}.voterDetail .meta{flex:1;min-width:0;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.content .row{padding:9px 10px} .row{position:relative}.row.primaryVoter{border-left:6px solid #dc3545;padding-left:7px}.voteBadge{display:inline-block;padding:2px 5px;border-radius:5px;font-size:11px;font-weight:800;line-height:1.2;margin-left:3px}.badgeEarly{background:#ffd84d;color:#3a2b00}.badgeMail{background:#7b3fb5;color:#fff}.row.g26Mail{box-shadow:inset 0 0 0 2px #7b3fb5;background:#fbf7ff}</style></head><body><h1>Secure canvass2026 import</h1><p>The secret stays in this browser request and is not stored in the voter database.</p><input id="secret" type="password" placeholder="IMPORT_SECRET"><input id="file" type="file" accept=".csv"><button id="go">Import clean voter CSV</button><pre id="out">Ready.</pre><script>
-const out=document.querySelector("#out");
-function parseCSV(t){let a=[],r=[],v="",q=false;for(let i=0;i<t.length;i++){let c=t[i];if(q){if(c=='"'&&t[i+1]=='"'){v+='"';i++}else if(c=='"')q=false;else v+=c}else if(c=='"')q=true;else if(c==","){r.push(v);v=""}else if(c=="\\n"){r.push(v.replace(/\\r$/,""));a.push(r);r=[];v=""}else v+=c}if(v||r.length){r.push(v);a.push(r)}return a}
-async function call(url,secret,opt={}){opt.headers={...(opt.headers||{}),"x-import-secret":secret};let r=await fetch(url,opt),z=await r.json();if(!r.ok)throw new Error(JSON.stringify(z));return z}
-document.querySelector("#go").onclick=async()=>{try{let secret=document.querySelector("#secret").value,file=document.querySelector("#file").files[0];if(!secret||!file)throw new Error("Enter the secret and choose the clean CSV.");let st=await call("/api/import/status",secret);if(!st.open)throw new Error("Database already contains "+st.count+" voters; import is locked.");let a=parseCSV(await file.text()),h=a.shift();if(a.length!==7333)throw new Error("Expected 7,333 rows but this CSV has "+a.length+".");out.textContent="Validated 7,333 rows. Importing…";let total=0;for(let i=0;i<a.length;i+=75){let rows=a.slice(i,i+75).map(x=>Object.fromEntries(h.map((k,j)=>[k,x[j]??""])));let z=await call("/api/import/batch",secret,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({rows,expected_count_before:total})});total+=z.inserted;out.textContent="Imported "+total+" / 7,333";}let z=await call("/api/import/finish",secret,{method:"POST"});out.textContent="COMPLETE — "+z.count+" voters; P26 verification: "+z.p26+".";}catch(e){out.textContent="STOPPED — "+e.message}}
-</script></body></html>`}
 function page(){
 return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ward 10 Canvass 2026</title><style>
@@ -143,11 +105,8 @@ function qs(){let p=new URLSearchParams;filters.forEach(x=>{let v=$("#"+x).value
 function pickFilter(btn){let g=btn.closest("[data-filter]"),id=g.dataset.filter,input=$("#"+id),same=input.value===btn.dataset.value;g.querySelectorAll(".filterBtn").forEach(x=>x.classList.remove("selected"));input.value=same?"":btn.dataset.value;if(!same)btn.classList.add("selected");load()}
 function clearFilters(){filters.forEach(x=>$("#"+x).value="");$("#search").value="";document.querySelectorAll(".filterBtn").forEach(x=>x.classList.remove("selected"));load()}
 async function getJSON(url){let r=await fetch(url),z=await r.json();if(!r.ok||z.error)throw new Error(z.error||("Request failed "+r.status));return z}
-async function load(){try{let p=qs();if(tab==="field")return await field(p);p.set("mode",tab);let [rows,s]=await Promise.all([getJSON("/api/voters?"+p),getJSON("/api/summary?"+qs())]);$("#summary").innerHTML='<span><b>'+Number(s.g26_mail||0)+'</b> G26 Mail</span><span><b>'+Number(s.requested||0)+'</b> Req</span><span><b>'+Number(s.sent||0)+'</b> Sent</span><span><b>'+Number(s.received||0)+'</b> Rec</span>';if(!Array.isArray(rows))throw new Error("Voter results were not returned as a list");$("#content").innerHTML=rows.length?rows.map(v=>card(v,false)).join(""):"No results for these filters."}catch(e){$("#content").innerHTML='<div class="row"><b>Load error</b><div class="meta">'+esc(e.message)+'</div></div>';console.error(e)}}
-function groupDoors(rows){let houses=new Map;rows.forEach(v=>{let hk=[v.street,v.house_number].join("|"),unit=(v.unit||"").trim();if(!houses.has(hk))houses.set(hk,{address:v.house_number+" "+v.street,doors:new Map});let h=houses.get(hk),dk=unit||"__NO_UNIT__";if(!h.doors.has(dk))h.doors.set(dk,[]);h.doors.get(dk).push(v)});return [...houses.values()].map(houseCard).join("")}
-function houseCard(h){let total=[...h.doors.values()].reduce((n,x)=>n+x.length,0);return '<section class="houseGroup"><div class="houseHeader">'+esc(h.address)+' <span>'+total+' voter'+(total===1?'':'s')+'</span></div>'+[...h.doors.entries()].map(([unit,vs])=>doorCard(unit,vs)).join("")+'</section>'}
-function doorCard(unit,vs){let label=unit==="__NO_UNIT__"?"Main / no unit":unit;return '<div class="doorGroup"><div class="doorHeader">'+esc(label)+' <span>'+vs.length+' voter'+(vs.length===1?'':'s')+'</span></div>'+vs.map(v=>card(v,true)).join("")+'</div>'}
-function card(v,grouped=false){let contact=tab==="text"?'<div class="actions"><button type="button" data-go="sms" data-contact="'+esc(v.phone||"")+'">Text</button><button type="button" data-go="tel" data-contact="'+esc(v.phone||"")+'">Call</button></div>':tab==="email"?'<div class="actions"><button type="button" data-go="mailto" data-contact="'+esc(v.email||"")+'">Email</button></div>':"";
+async function load(){try{let p=qs();if(tab==="field")return await field(p);p.set("mode",tab);let [rows,s]=await Promise.all([getJSON("/api/voters?"+p),getJSON("/api/summary?"+qs())]);$("#summary").innerHTML='<span><b>'+Number(s.g26_mail||0)+'</b> G26 Mail</span><span><b>'+Number(s.requested||0)+'</b> Req</span><span><b>'+Number(s.sent||0)+'</b> Sent</span><span><b>'+Number(s.received||0)+'</b> Rec</span>';if(!Array.isArray(rows))throw new Error("Voter results were not returned as a list");$("#content").innerHTML=rows.length?rows.map(card).join(""):"No results for these filters."}catch(e){$("#content").innerHTML='<div class="row"><b>Load error</b><div class="meta">'+esc(e.message)+'</div></div>';console.error(e)}}
+function card(v){let contact=tab==="text"?'<div class="actions"><button type="button" data-go="sms" data-contact="'+esc(v.phone||"")+'">Text</button><button type="button" data-go="tel" data-contact="'+esc(v.phone||"")+'">Call</button></div>':tab==="email"?'<div class="actions"><button type="button" data-go="mailto" data-contact="'+esc(v.email||"")+'">Email</button></div>':"";
 let badges="";if(v.p26_voted&&v.p26_method==="Early")badges+='<span class="voteBadge badgeEarly">P26 Early</span>';if(v.p26_voted&&v.p26_method==="Mail")badges+='<span class="voteBadge badgeMail">P26 Mail</span>';if(v.g26_mail_record)badges+='<span class="voteBadge badgeMail">G26 Mail</span>';
 let rowClass="row"+(v.p26_voted?" primaryVoter":"")+(v.g26_mail_record?" g26Mail":"");
 return '<div class="'+rowClass+'"><div class="nameLine"><div class="addrName"><div class="addr">'+esc(v.house_number+" "+v.street+(v.unit?" · "+v.unit:""))+'</div><div class="name">'+esc(v.first_name+" "+v.last_name)+'</div></div></div><div class="voterDetail"><div class="meta">'+esc(v.precinct)+badges+(v.phone?" · "+esc(v.phone):"")+'</div><div class="nameActions">'+btn(v,"knock_lit","✔️","knockBtn")+btn(v,"talked","💬","talkBtn")+btn(v,"supporter","⭐","supporterBtn")+btn(v,"follow_up","❗","followBtn")+'</div></div>'+contact+'<div class="actions">'+(tab==="text"?btn(v,"bad_phone","✕ Bad #","danger")+btn(v,"do_not_contact","Stop","danger")+btn(v,"intends_mail","Mail")+btn(v,"intends_early","Early")+btn(v,"intends_polls","Polls"):"")+'</div><div class="noteWrap" data-note-wrap="'+esc(v.voter_id)+'"><input class="note" data-voter="'+esc(v.voter_id)+'" value="'+esc(v.campaign_notes||"")+'" placeholder="Notes"></div></div>'}
@@ -170,4 +129,4 @@ document.addEventListener("click",async e=>{let g=e.target.closest("[data-go]");
 document.addEventListener("change",e=>{if(e.target.matches(".note"))setv(e.target.dataset.voter,"notes",e.target.value)});
 (async()=>{try{$("#content").textContent="Loading voters…";await meta();await load()}catch(e){$("#content").innerHTML='<div class="row"><b>App load error</b><div class="meta">'+esc(e.message)+'</div></div>';console.error(e)}})();
 </script></body></html>`}
-export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname.startsWith("/api/"))return await api(req,env,u);if(u.pathname==="/import")return new Response(importPage(),{headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store"}});return new Response(page(),{headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store, no-cache, must-revalidate","pragma":"no-cache"}})}catch(e){return json({error:String(e?.message||e)},500)}}};
+export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname.startsWith("/api/"))return await api(req,env,u);return new Response(page(),{headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store, no-cache, must-revalidate","pragma":"no-cache"}})}catch(e){return json({error:String(e?.message||e)},500)}}};
