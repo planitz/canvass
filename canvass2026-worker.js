@@ -107,6 +107,16 @@ body.canvassTab .precinctFilter{display:none!important}
 .voterDetail .meta{flex:1!important;min-width:0!important;font-size:12px!important;margin:0!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
 .nameActions{display:flex!important;gap:3px!important;flex:0 0 auto!important;margin-left:auto!important}
 .nameActions button{width:28px!important;min-width:28px!important;height:28px!important;min-height:28px!important;padding:0!important}
+
+body.canvassTab .precinctFilter{display:none!important}
+.filters [data-filter="voted"]{display:grid!important;grid-template-columns:repeat(7,minmax(0,1fr))!important;gap:4px!important;width:100%!important}
+.filters [data-filter="voted"] .filterLabel{grid-column:1/-1!important}
+.filters [data-filter="voted"] .filterBtn{display:block!important;width:100%!important;min-width:0!important;height:38px!important;min-height:38px!important;padding:4px 1px!important;font-size:11px!important;line-height:1!important;overflow:hidden!important}
+.row.primaryVoter{border-left:6px solid #dc3545!important;padding-left:5px!important}
+.voteBadge{display:inline-block!important;padding:2px 5px!important;border-radius:5px!important;font-size:10px!important;font-weight:800!important;line-height:1.2!important;margin-left:4px!important}
+.voteBadge.badgeEarly{background:#ffd84d!important;color:#3a2b00!important}
+.voteBadge.badgeMail{background:#7b3fb5!important;color:#fff!important}
+.row.g26Mail{box-shadow:inset 0 0 0 2px #7b3fb5!important;background:#fbf7ff!important}
 </style></head><body><header><h1>Ward 10 Canvass 2026</h1></header>
 <div class="tabs"><button type="button" data-tab="canvass" class="active">Canvass</button><button type="button" data-tab="field">Field Plan</button><button type="button" data-tab="text">Text / Call</button><button type="button" data-tab="email">Email</button></div>
 <div class="filters">
