@@ -1,0 +1,12 @@
+{
+  "name": "canvass2026",
+  "compatibility_date": "2026-07-30",
+  "main": "./canvass2026-worker.js",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "canvass2026",
+      "database_id": "66d51e52-868e-4b21-8d55-4765bef73e14"
+    }
+  ]
+}
