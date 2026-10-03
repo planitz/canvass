@@ -135,7 +135,7 @@ return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" c
 <div id="summary" class="summary"></div><main id="content" class="content"></main>
 <script>
 let tab="canvass"; const $=x=>document.querySelector(x), filters=["street","voted","method","precinct","supporter"];
-async function meta(){let m=await fetch("/api/meta").then(r=>r.json());m.streets.forEach(x=>$("#street").insertAdjacentHTML("beforeend",'<option>'+x+'</option>'));m.precincts.forEach(x=>$("#precinct").insertAdjacentHTML("beforeend",'<option>'+x.precinct+'</option>'))}
+async function meta(){let r=await fetch("/api/meta"),m=await r.json();if(!r.ok)throw new Error(m.error||"Could not load filters");let street=$("#street");m.streets.forEach(x=>{let o=document.createElement("option");o.value=x;o.textContent=x;street.appendChild(o)})}
 function qs(){let p=new URLSearchParams;filters.forEach(x=>{let v=$("#"+x).value;if(v)p.set(x,v)});if($("#search").value)p.set("q",$("#search").value);return p}
 function pickFilter(btn){let g=btn.closest("[data-filter]"),id=g.dataset.filter,input=$("#"+id),same=input.value===btn.dataset.value;g.querySelectorAll(".filterBtn").forEach(x=>x.classList.remove("selected"));input.value=same?"":btn.dataset.value;if(!same)btn.classList.add("selected");load()}
 function clearFilters(){filters.forEach(x=>$("#"+x).value="");$("#search").value="";document.querySelectorAll(".filterBtn").forEach(x=>x.classList.remove("selected"));load()}
