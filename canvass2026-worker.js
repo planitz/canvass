@@ -33,6 +33,35 @@ FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id`;
 
 async function api(req,env,u){
   const p=u.pathname;
+  const importAuth = () => {
+    const token=req.headers.get("x-import-secret")||"";
+    return !!env.IMPORT_SECRET && token===env.IMPORT_SECRET;
+  };
+  if(p==="/api/import/status"){
+    if(!importAuth()) return json({error:"Unauthorized"},401);
+    const r=await env.DB.prepare("SELECT COUNT(*) count FROM voters").first();
+    return json({count:r.count,open:r.count===0});
+  }
+  if(p==="/api/import/batch" && req.method==="POST"){
+    if(!importAuth()) return json({error:"Unauthorized"},401);
+    const existing=await env.DB.prepare("SELECT COUNT(*) count FROM voters").first();
+    if(existing.count!==0) return json({error:"Import locked: voters table is not empty.",count:existing.count},409);
+    const body=await req.json(), rows=body.rows;
+    if(!Array.isArray(rows)||rows.length<1||rows.length>75) return json({error:"Batch must contain 1-75 rows."},400);
+    const cols=["voter_id","registration_status","first_name","middle_name","last_name","suffix","date_of_birth","age_on_2026_09_09","house_number","street","unit","household_address","city","zip","precinct","ward","ward_district","party","registration_date","effective_date","status_change_date","phone","email","source_known_supporter_p26","source_g26_support_status","source_priority","p22_voted","p22_method","g22_voted","g22_method","p24_voted","p24_method","g24_voted","g24_method","p26_voted","p26_method","g26_voted","g26_method","g26_mail_record","g26_mail_request_date","g26_mail_application_status","g26_mail_application_rejection","g26_mail_sos_mail_date","g26_mail_boe_received_date","g26_mail_status","g26_mail_ballot_deficiency","g26_voted_at_local_board","last_vote_date","last_election","last_vote_method","official_source","match_confidence","data_quality_flags"];
+    const sql="INSERT INTO voters("+cols.join(",")+") VALUES("+cols.map(()=>"?").join(",")+")";
+    await env.DB.batch(rows.map(r=>env.DB.prepare(sql).bind(...cols.map(c=>r[c]===undefined||r[c]===""?null:r[c]))));
+    return json({ok:true,inserted:rows.length});
+  }
+  if(p==="/api/import/finish" && req.method==="POST"){
+    if(!importAuth()) return json({error:"Unauthorized"},401);
+    const r=await env.DB.prepare("SELECT COUNT(*) count FROM voters").first();
+    if(r.count!==7333) return json({error:"Expected exactly 7333 voters.",count:r.count},409);
+    const p26=await env.DB.prepare("SELECT SUM(p26_voted) n FROM voters").first();
+    if(Number(p26.n)!==1491) return json({error:"P26 verification failed.",p26:p26.n},409);
+    await env.DB.prepare("INSERT INTO data_imports(import_type,source_name,row_count,notes) VALUES('voters','Ward10_NEW_APP_IMPORT_2026-10-03.csv',7333,'Authenticated browser import; reconciled master')").run();
+    return json({ok:true,count:r.count,p26:p26.n});
+  }
   if(p==="/api/meta"){
     const [streets,precincts]=await Promise.all([
       env.DB.prepare("SELECT DISTINCT street FROM voters ORDER BY street").all(),
@@ -79,6 +108,14 @@ async function api(req,env,u){
   }
   return json({error:"not found"},404);
 }
+function importPage(){
+return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>canvass2026 secure import</title><style>body{font:16px system-ui;max-width:760px;margin:35px auto;padding:20px}input,button{font-size:16px;padding:10px;margin:6px 0;width:100%}button{font-weight:700}pre{background:#f4f6f8;padding:12px;white-space:pre-wrap}</style></head><body><h1>Secure canvass2026 import</h1><p>The secret stays in this browser request and is not stored in the voter database.</p><input id="secret" type="password" placeholder="IMPORT_SECRET"><input id="file" type="file" accept=".csv"><button id="go">Import clean voter CSV</button><pre id="out">Ready.</pre><script>
+const out=document.querySelector("#out");
+function parseCSV(t){let a=[],r=[],v="",q=false;for(let i=0;i<t.length;i++){let c=t[i];if(q){if(c=='"'&&t[i+1]=='"'){v+='"';i++}else if(c=='"')q=false;else v+=c}else if(c=='"')q=true;else if(c==","){r.push(v);v=""}else if(c=="\\n"){r.push(v.replace(/\\r$/,""));a.push(r);r=[];v=""}else v+=c}if(v||r.length){r.push(v);a.push(r)}return a}
+async function call(url,secret,opt={}){opt.headers={...(opt.headers||{}),"x-import-secret":secret};let r=await fetch(url,opt),z=await r.json();if(!r.ok)throw new Error(JSON.stringify(z));return z}
+document.querySelector("#go").onclick=async()=>{try{let secret=document.querySelector("#secret").value,file=document.querySelector("#file").files[0];if(!secret||!file)throw new Error("Enter the secret and choose the clean CSV.");let st=await call("/api/import/status",secret);if(!st.open)throw new Error("Database already contains "+st.count+" voters; import is locked.");let a=parseCSV(await file.text()),h=a.shift();if(a.length!==7333)throw new Error("Expected 7,333 rows but this CSV has "+a.length+".");out.textContent="Validated 7,333 rows. Importing…";let total=0;for(let i=0;i<a.length;i+=75){let rows=a.slice(i,i+75).map(x=>Object.fromEntries(h.map((k,j)=>[k,x[j]??""])));let z=await call("/api/import/batch",secret,{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({rows})});total+=z.inserted;out.textContent="Imported "+total+" / 7,333";}let z=await call("/api/import/finish",secret,{method:"POST"});out.textContent="COMPLETE — "+z.count+" voters; P26 verification: "+z.p26+".";}catch(e){out.textContent="STOPPED — "+e.message}}
+</script></body></html>`}
+}
 function page(){
 return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Ward 10 Canvass 2026</title><style>
@@ -102,4 +139,4 @@ async function fieldSort(s){let p=qs();p.set("sort",s);p.set("dir","desc");let r
 function esc(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
 document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{document.querySelectorAll(".tabs button").forEach(x=>x.classList.remove("active"));b.classList.add("active");tab=b.dataset.tab;load()});filters.forEach(x=>$("#"+x).onchange=load);let t;$("#search").oninput=()=>{clearTimeout(t);t=setTimeout(load,250)};meta().then(load);
 </script></body></html>`}
-export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname.startsWith("/api/"))return await api(req,env,u);return new Response(page(),{headers:{"content-type":"text/html;charset=utf-8"}})}catch(e){return json({error:String(e?.message||e)},500)}}};
+export default {async fetch(req,env){const u=new URL(req.url);try{if(u.pathname.startsWith("/api/"))return await api(req,env,u);if(u.pathname==="/import")return new Response(importPage(),{headers:{"content-type":"text/html;charset=utf-8","cache-control":"no-store"}});return new Response(page(),{headers:{"content-type":"text/html;charset=utf-8"}})}catch(e){return json({error:String(e?.message||e)},500)}}};
