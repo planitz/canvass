@@ -129,7 +129,7 @@ async function api(req,env,u){
       ROUND(100.0*COUNT(DISTINCT CASE WHEN COALESCE(c.knock_lit,0)=1 THEN v.house_number||'|'||COALESCE(v.unit,'') END)/NULLIF(COUNT(DISTINCT v.house_number||'|'||COALESCE(v.unit,'')),0),1) doors_percent,
       ROUND(100.0*COUNT(DISTINCT CASE WHEN COALESCE(c.knock_lit,0)=1 THEN v.house_number END)/NULLIF(COUNT(DISTINCT v.house_number),0),1) percent_complete,
       ROUND(100.0*SUM(CASE WHEN COALESCE(c.knock_lit,0)=1 OR COALESCE(c.talked,0)=1 OR COALESCE(c.supporter,0)=1 OR COALESCE(c.follow_up,0)=1 OR EXISTS(SELECT 1 FROM activity_log al WHERE al.voter_id=v.voter_id AND al.action_type IN ('CALL','TEXT','EMAIL')) THEN 1 ELSE 0 END)/NULLIF(COUNT(*),0),1) reached_percent,
-      MAX(CASE WHEN COALESCE(c.knock_lit,0)=1 THEN c.updated_at END) last_knock_date,
+      (SELECT MAX(al.created_at) FROM activity_log al WHERE al.voter_id IN (SELECT vv.voter_id FROM voters vv WHERE vv.street=v.street) AND al.action_type='KNOCK_LIT' AND al.action_value='1') last_knock_date,
       GROUP_CONCAT(DISTINCT v.precinct) precincts
       FROM voters v LEFT JOIN campaign_activity c ON c.voter_id=v.voter_id${x.sql} GROUP BY v.street ORDER BY ${sort} ${dir}`;
     return json((await env.DB.prepare(sql).bind(...x.binds).all()).results);
