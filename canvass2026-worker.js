@@ -189,7 +189,7 @@ body.canvassTab .precinctFilter{display:none!important}
 .voteBadge{display:inline-block!important;padding:2px 5px!important;border-radius:5px!important;font-size:10px!important;font-weight:800!important;line-height:1.2!important;margin-left:4px!important}
 .voteBadge.badgeEarly{background:#ffd84d!important;color:#3a2b00!important}
 .voteBadge.badgeMail{background:#7b3fb5!important;color:#fff!important}
-.row.g26Mail{box-shadow:inset 0 0 0 2px #7b3fb5!important;background:#fbf7ff!important}
+.row.g26Mail{box-shadow:none!important;background:inherit!important}
 
 /* outreach + compact campaign filter */
 .filters{display:flex!important;flex-direction:row!important;flex-wrap:wrap!important;column-gap:6px!important}
